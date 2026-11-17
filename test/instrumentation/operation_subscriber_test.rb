@@ -11,6 +11,7 @@ class OperationSubscriberTest < ActiveSupport::TestCase
     RailsPulse::Current.rails_pulse_operations = []
 
     @original_capture_actual_sql = RailsPulse.configuration.capture_actual_sql
+    @original_operation_filter = RailsPulse.configuration.operation_filter
     RailsPulse.configuration.capture_actual_sql = true
 
     super
@@ -18,10 +19,123 @@ class OperationSubscriberTest < ActiveSupport::TestCase
 
   def teardown
     RailsPulse.configuration.capture_actual_sql = @original_capture_actual_sql
+    RailsPulse.configuration.operation_filter = @original_operation_filter
     RailsPulse::Current.reset
     super
   end
 
+  # Operation Filter Tests
+
+  test "operation_filter redacts SQL and labels before buffering on both capture paths" do
+    RailsPulse.configuration.operation_filter = ->(operation) do
+      if operation[:operation_type] == "sql"
+        operation.merge(label: "[FILTERED]", actual_sql: "SELECT ?")
+      else
+        operation.merge!(label: "[FILTERED]", actual_sql: "SELECT ?")
+      end
+    end
+
+    publish_event("sql.active_record", { sql: "SELECT 'private-value'", row_count: 3 })
+    publish_event("request.net_http", { method: "GET", uri: "https://example.test/private-value" })
+
+    operations = RailsPulse::Current.rails_pulse_operations
+
+    assert_equal [ "sql", "http" ], operations.map { |op| op[:operation_type] }
+    operations.each do |operation|
+      assert_equal "[FILTERED]", operation[:label]
+      assert_equal "SELECT ?", operation[:actual_sql]
+      assert_equal @request.id, operation[:request_id]
+      assert_in_delta 5, operation[:duration], 0.001
+    end
+    assert_equal 3, operations.first[:row_count]
+    assert_not_includes operations.inspect, "private-value"
+  end
+
+  test "operation_filter can retain only SQL and controllers in request and job buffers" do
+    seen = []
+    RailsPulse.configuration.operation_filter = ->(operation) do
+      seen << operation
+      operation if %w[sql controller].include?(operation[:operation_type])
+    end
+
+    [ :rails_pulse_request_id, :rails_pulse_job_run_id ].each do |context|
+      RailsPulse::Current.rails_pulse_request_id = nil
+      RailsPulse::Current.rails_pulse_job_run_id = nil
+      RailsPulse::Current.public_send("#{context}=", "filter-context")
+      RailsPulse::Current.rails_pulse_operations = []
+
+      publish_event("cache_read.active_support", { key: "private-cache", hit: true })
+      publish_event("cache_write.active_support", { key: "private-cache" })
+      publish_event("request.net_http", { method: "GET", uri: "https://example.test/private-url" })
+      publish_event("service_upload.active_storage", { key: "private-storage" })
+      publish_event("sql.active_record", { sql: "SELECT 1", row_count: 2 })
+      publish_event("process_action.action_controller", { controller: "UsersController", action: "index" })
+
+      operations = RailsPulse::Current.rails_pulse_operations
+
+      assert_equal [ "sql", "controller" ], operations.map { |op| op[:operation_type] }
+      assert_equal "SELECT 1", operations.first[:actual_sql]
+      assert_equal "UsersController#index", operations.last[:label]
+      assert_equal "filter-context", operations.first[context.to_s.delete_prefix("rails_pulse_").to_sym]
+      assert_not_includes operations.inspect, "private-"
+    end
+
+    assert_equal %w[cache_read cache_write http storage sql controller] * 2,
+      seen.map { |op| op[:operation_type] }
+    assert seen.first[:cache_hit]
+    assert_equal 2, seen[4][:row_count]
+    assert_not_nil seen.first[:codebase_location]
+  end
+
+  test "operation_filter drops SQL before raw SQL can enter a buffer" do
+    seen_sql = nil
+    RailsPulse.configuration.operation_filter = ->(operation) do
+      seen_sql = operation[:actual_sql]
+      nil
+    end
+    RailsPulse::Current.rails_pulse_operations = nil
+
+    publish_event("sql.active_record", { sql: "SELECT 'private-value'" })
+
+    assert_equal "SELECT 'private-value'", seen_sql
+    assert_nil RailsPulse::Current.rails_pulse_operations
+  end
+
+  test "operation_filter drops invalid returns and exceptions without logging sensitive data" do
+    output = StringIO.new
+    original_logger = RailsPulse.configuration.logger
+    RailsPulse.configuration.logger = Logger.new(output)
+    filters = [ false, true, "private-value", [], 123 ].map { |value| ->(_operation) { value } }
+    filters << ->(operation) { raise "private-error: #{operation.inspect}" }
+
+    filters.each do |filter|
+      RailsPulse.configuration.operation_filter = filter
+      publish_event("sql.active_record", { sql: "SELECT 'private-value'" })
+      publish_event("request.net_http", { method: "GET", uri: "https://example.test/private-value" })
+
+      assert_empty RailsPulse::Current.rails_pulse_operations
+    end
+
+    assert_empty output.string
+  ensure
+    RailsPulse.configuration.logger = original_logger
+  end
+
+  test "nil operation_filter preserves SQL and HTTP operation data" do
+    RailsPulse.configuration.operation_filter = nil
+    RailsPulse.configuration.capture_actual_sql = false
+
+    publish_event("sql.active_record", { sql: "SELECT 'unchanged'", row_count: 4 })
+    publish_event("request.net_http", { method: "GET", uri: "https://example.test/unchanged" })
+
+    sql, http = RailsPulse::Current.rails_pulse_operations
+
+    assert_equal "SELECT 'unchanged'", sql[:actual_sql]
+    assert_nil sql[:label]
+    assert_equal 4, sql[:row_count]
+    assert_equal "GET https://example.test/unchanged", http[:label]
+    assert_not http.key?(:actual_sql)
+  end
 
   test "subscriber module should exist" do
     assert defined?(RailsPulse::Subscribers::OperationSubscriber)

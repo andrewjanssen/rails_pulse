@@ -40,6 +40,21 @@ module RailsPulse
           @app_path ||= Rails.root.join("app").to_s
         end
 
+        def append_operation(operation_data)
+          filter = RailsPulse.configuration.operation_filter
+          unless filter.nil?
+            # Filter before buffering: rejected data must never reach the writer queue.
+            operation_data = filter.call(operation_data)
+            return unless operation_data.is_a?(Hash)
+          end
+
+          RailsPulse::Current.rails_pulse_operations ||= []
+          RailsPulse::Current.rails_pulse_operations << operation_data
+        rescue StandardError
+          # A filter error may contain private data; drop silently, without logging it.
+          nil
+        end
+
         # The first frame under the host's app/ directory, or nil.
         #
         # This runs for every SQL, template, cache and HTTP event, so it must
@@ -135,8 +150,7 @@ module RailsPulse
             occurred_at: Time.zone.at(start)
           }.merge(extra)
 
-          RailsPulse::Current.rails_pulse_operations ||= []
-          RailsPulse::Current.rails_pulse_operations << operation_data
+          append_operation(operation_data)
         end
 
         def store_operation(label:, operation_type:, start:, finish:, codebase_location:)
@@ -158,8 +172,7 @@ module RailsPulse
             occurred_at: Time.zone.at(start)
           }
 
-          RailsPulse::Current.rails_pulse_operations ||= []
-          RailsPulse::Current.rails_pulse_operations << operation_data
+          append_operation(operation_data)
         end
 
         def subscribe_sql_queries!

@@ -88,6 +88,7 @@ module RailsPulse
                   :capture_actual_sql,
                   :custom_asset_patterns,
                   :mount_path,
+                  :operation_filter,
                   :full_retention_period,
                   :event_retention_period,
                   :event_retention_exempt_kinds,
@@ -210,6 +211,7 @@ module RailsPulse
       @capture_actual_sql = false
       @custom_asset_patterns = []
       @mount_path = nil
+      @operation_filter = nil
       @full_retention_period = 30.days
       @event_retention_period = 90.days
       @event_retention_exempt_kinds = []
@@ -362,6 +364,7 @@ module RailsPulse
       validate_tags!
       validate_default_disabled_tags!
       validate_job_settings!
+      validate_operation_filter!
       validate_dashboard_settings!
       validate_tracking_settings!
       validate_exception_settings!
@@ -496,6 +499,12 @@ module RailsPulse
       @detail_capture_settings = DetailCaptureSettings.new(
         above, @request_thresholds[above].to_f, @query_thresholds[above].to_f, sample_rate.to_f
       ).freeze
+    end
+
+    def validate_operation_filter!
+      unless @operation_filter.nil? || @operation_filter.respond_to?(:call)
+        raise ArgumentError, "operation_filter must respond to #call or be nil"
+      end
     end
 
     def validate_patterns!

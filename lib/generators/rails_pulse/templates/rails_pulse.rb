@@ -182,6 +182,26 @@ RailsPulse.configure do |config|
   # Default: false (upgrade-safe). New installs may opt in after review.
   # config.capture_actual_sql = true
 
+  # Optional operation privacy hook. Default: nil (no extra filtering).
+  # Called synchronously with one symbol-keyed Hash per collected operation,
+  # before it enters the request/job buffer or async writer queue, and before
+  # SQL normalization. Keys: :operation_type, :label, :request_id, :job_run_id,
+  # :duration (ms), :codebase_location, :start_time (epoch seconds), :occurred_at.
+  # SQL also includes :actual_sql and :row_count; cache reads include :cache_hit.
+  # :actual_sql is available here even when capture_actual_sql is false;
+  # SQL :label is nil until normalization. Redact :actual_sql to redact SQL.
+  # Return the Hash (modified in place or replaced) to keep it, or nil to drop it.
+  # Preserve the operation's structural/timing keys when redacting values.
+  # Any non-Hash return or StandardError drops the operation silently, without
+  # logging its payload or error. A non-nil setting must respond to #call.
+  # Runs on the application thread: keep it fast and avoid instrumented work.
+  # Dropped operations do not contribute to query/operation statistics; this
+  # does not filter request/job records or exceptions, or change SQL storage defaults.
+  # Example: keep only SQL and controller operations, dropping cache/HTTP/storage, etc.
+  # config.operation_filter = ->(operation) {
+  #   operation if %w[sql controller].include?(operation[:operation_type])
+  # }
+
   # ====================================================================================================
   #                                            BACKGROUND JOBS
   # ====================================================================================================

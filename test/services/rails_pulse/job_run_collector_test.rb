@@ -69,6 +69,36 @@ module RailsPulse
       assert_nil operations.first.request_id
     end
 
+    # Operation Filter Tests
+
+    test "track persists only filtered operations from the shared job buffer" do
+      job = FakeJob.new
+      original_filter = RailsPulse.configuration.operation_filter
+      RailsPulse.configuration.operation_filter = ->(operation) do
+        operation.merge(actual_sql: "SELECT 42") if operation[:operation_type] == "sql"
+      end
+
+      RailsPulse::JobRunCollector.track(job) do
+        ActiveSupport::Notifications.instrument("sql.active_record", sql: "SELECT 'private-value'")
+        ActiveSupport::Notifications.instrument("cache_read.active_support", key: "private-cache")
+        ActiveSupport::Notifications.instrument("request.net_http",
+          method: "GET", uri: "https://example.test/private-url")
+        ActiveSupport::Notifications.instrument("service_upload.active_storage", key: "private-storage")
+
+        assert_equal [ "sql" ], RailsPulse::Current.rails_pulse_operations.map { |op| op[:operation_type] }
+        assert_equal "SELECT 42", RailsPulse::Current.rails_pulse_operations.first[:actual_sql]
+      end
+
+      job_run = RailsPulse::JobRun.find_by!(run_id: job.job_id)
+      operations = RailsPulse::Operation.where(job_run: job_run)
+
+      assert_equal "success", job_run.status
+      assert_equal [ "sql" ], operations.pluck(:operation_type)
+      assert_not_includes operations.first.attributes.inspect, "private-"
+    ensure
+      RailsPulse.configuration.operation_filter = original_filter
+    end
+
     test "track marks failures and surfaces exceptions" do
       job = FakeJob.new
 

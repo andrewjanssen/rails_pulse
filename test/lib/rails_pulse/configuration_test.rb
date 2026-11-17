@@ -9,6 +9,34 @@ module RailsPulse
       config
     end
 
+    # Operation Filter Tests
+
+    test "operation_filter defaults to nil" do
+      assert_nil Configuration.new.operation_filter
+      assert_nil build_config { self.operation_filter = nil }.operation_filter
+    end
+
+    test "operation_filter accepts callables" do
+      callable = Object.new
+      def callable.call(operation) = operation
+
+      [ ->(operation) { operation }, callable ].each do |filter|
+        config = build_config { self.operation_filter = filter }
+
+        assert_same filter, config.operation_filter
+      end
+    end
+
+    test "operation_filter rejects non-callables without inspecting their value" do
+      [ false, true, "private-value", 123, {} ].each do |filter|
+        error = assert_raises(ArgumentError) do
+          build_config { self.operation_filter = filter }
+        end
+
+        assert_equal "operation_filter must respond to #call or be nil", error.message
+      end
+    end
+
     # Store Full Details Tests
 
     test "store_full_details defaults to :all" do

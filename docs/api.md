@@ -27,6 +27,12 @@ what each key does and its default; this page does not duplicate it.
   booted a logger.
 - `RailsPulse.connects_to` — `config.connects_to`, or `nil` when unset or unconfigured.
 
+`config.operation_filter` is an optional callable receiving one operation Hash before
+request/job buffering or async queueing. Return a modified/replacement Hash to keep it,
+or `nil` to drop it. Invalid return types and `StandardError` drop the operation silently,
+without logging the payload or error. The default is `nil`, preserving existing collection.
+The initializer template documents the keys, SQL timing, and a type-allowlist example.
+
 ## Navigation
 
 - `RailsPulse.register_nav_item(label:, path_helper:, icon:, position: 100)` — adds an entry
