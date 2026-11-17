@@ -200,6 +200,17 @@ module RailsPulse
         return if RailsPulse::Current.skip_recording_rails_pulse_activity
         return unless RailsPulse::SchemaCheck.tracking_allowed?
 
+        filter = RailsPulse.configuration.request_filter
+        unless filter.nil?
+          begin
+            data = filter.call(data)
+          rescue StandardError
+            # Filter failures can contain private metadata; drop without logging them.
+            return
+          end
+          return unless data.is_a?(Hash)
+        end
+
         if RailsPulse.configuration.async && !connection_shared_across_threads?
           writer.enqueue(data)
           nil

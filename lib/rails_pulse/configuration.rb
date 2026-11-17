@@ -89,6 +89,7 @@ module RailsPulse
                   :custom_asset_patterns,
                   :mount_path,
                   :operation_filter,
+                  :request_filter,
                   :full_retention_period,
                   :event_retention_period,
                   :event_retention_exempt_kinds,
@@ -212,6 +213,7 @@ module RailsPulse
       @custom_asset_patterns = []
       @mount_path = nil
       @operation_filter = nil
+      @request_filter = nil
       @full_retention_period = 30.days
       @event_retention_period = 90.days
       @event_retention_exempt_kinds = []
@@ -365,6 +367,7 @@ module RailsPulse
       validate_default_disabled_tags!
       validate_job_settings!
       validate_operation_filter!
+      validate_request_filter!
       validate_dashboard_settings!
       validate_tracking_settings!
       validate_exception_settings!
@@ -547,6 +550,12 @@ module RailsPulse
 
       if @standalone_authentication_method && !@standalone_authentication_method.is_a?(Proc)
         raise ArgumentError, "standalone_authentication_method must be a Proc or nil, got #{@standalone_authentication_method.class}"
+      end
+    end
+
+    def validate_request_filter!
+      unless @request_filter.nil? || @request_filter.respond_to?(:call)
+        raise ArgumentError, "request_filter must respond to #call or be nil"
       end
     end
 

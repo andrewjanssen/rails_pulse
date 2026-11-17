@@ -202,6 +202,28 @@ RailsPulse.configure do |config|
   #   operation if %w[sql controller].include?(operation[:operation_type])
   # }
 
+  # Optional request metadata privacy hook. Default: nil (no extra filtering).
+  # Called synchronously with one symbol-keyed tracking Hash, after route path
+  # normalization and detail selection but before enqueueing or persistence.
+  # Applies to full-detail and folded requests, including escaping exceptions.
+  # Common keys: :method, :path, :controller_action (nil for unmatched routes),
+  # :duration (ms), :status, :occurred_at, :operations (already operation-filtered).
+  # Full detail also has :is_error, :request_uuid, and :response_size_bytes.
+  # :detail is absent with store_full_details = :all, otherwise true or false;
+  # folded requests contain only slimmed SQL operations.
+  # Return the Hash (modified in place or replaced) to keep it, or nil to drop
+  # the request and its operations from tracking, including aggregate statistics.
+  # Any non-Hash return or StandardError drops silently without logging data/errors.
+  # A non-nil setting must respond to #call. Preserve structural/timing keys and
+  # operations when redacting metadata; keep the hook fast and avoid instrumented work.
+  # Does not change route matching, the response/exception, job or exception records,
+  # or SQL storage defaults. Use operation_filter for operation-level privacy.
+  # Example: bucket unmatched paths without storing arbitrary URL path text.
+  # config.request_filter = ->(request) {
+  #   request[:path] = "/unmatched" if request[:controller_action].blank?
+  #   request
+  # }
+
   # ====================================================================================================
   #                                            BACKGROUND JOBS
   # ====================================================================================================

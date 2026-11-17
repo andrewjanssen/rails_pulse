@@ -33,6 +33,15 @@ or `nil` to drop it. Invalid return types and `StandardError` drop the operation
 without logging the payload or error. The default is `nil`, preserving existing collection.
 The initializer template documents the keys, SQL timing, and a type-allowlist example.
 
+`config.request_filter` is an optional callable receiving the request tracking Hash
+after path normalization and detail selection, before enqueueing or persistence.
+It applies to full-detail and folded requests, including escaping exceptions. Return
+the Hash (mutated or replaced) to keep it, or `nil` to drop the request and its operations
+from tracking and aggregates. Non-Hash returns and `StandardError` drop silently without
+logging data or errors. The default is `nil`, preserving existing behavior. This filters
+telemetry metadata, not route matching, application responses, jobs, or exception records.
+The initializer template documents the keys and an unmatched-path bucketing example.
+
 ## Navigation
 
 - `RailsPulse.register_nav_item(label:, path_helper:, icon:, position: 100)` — adds an entry

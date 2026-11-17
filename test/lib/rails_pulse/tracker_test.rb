@@ -5,12 +5,101 @@ class RailsPulse::TrackerTest < ActiveSupport::TestCase
     super
     RailsPulse::SchemaCheck.reset!
     RailsPulse::Tracker.reset_rollups!
+    @original_request_filter = RailsPulse.configuration.request_filter
   end
 
   def teardown
+    RailsPulse.configuration.request_filter = @original_request_filter
     RailsPulse::SchemaCheck.reset!
     RailsPulse::Tracker.reset_rollups!
     super
+  end
+
+  # Request Filter Tests
+
+  test "request_filter replaces unmatched request metadata before persistence" do
+    data = tracking_data.merge(
+      path: "/private-path", controller_action: nil, status: 404,
+      operations: [ {
+        operation_type: "controller", label: "[FILTERED]", duration: 2.5,
+        start_time: Time.current.to_f, occurred_at: Time.current
+      } ]
+    )
+    RailsPulse.configuration.request_filter = ->(request) { request.merge(path: "/unmatched") }
+
+    assert_difference "RailsPulse::Request.count", 1 do
+      RailsPulse::Tracker.track_request(data)
+    end
+
+    request = RailsPulse::Request.find_by!(request_uuid: data[:request_uuid])
+
+    assert_equal "/unmatched", request.route.path
+    assert_nil request.route.controller_action
+    assert_equal 404, request.status
+    assert_in_delta data[:duration], request.duration
+    assert_equal [ "[FILTERED]" ], request.operations.pluck(:label)
+    assert_not RailsPulse::Route.exists?(path: "/private-path")
+  end
+
+  test "request_filter mutates folded request metadata without losing status duration or SQL" do
+    data = folded_tracking_data.merge(path: "/private-path", controller_action: nil, status: 404)
+    RailsPulse.configuration.request_filter = ->(request) do
+      request[:path] = "/unmatched"
+      request
+    end
+
+    assert_no_difference "RailsPulse::Request.count" do
+      RailsPulse::Tracker.track_request(data)
+      RailsPulse::Tracker.flush_rollups!
+    end
+
+    route = RailsPulse::Route.find_by!(path: "/unmatched", controller_action: nil)
+    rollup = RailsPulse::Rollup.find_by!(rollupable: route)
+    query = RailsPulse::Query.find_by!(normalized_sql: "SELECT * FROM widgets WHERE id = ?")
+
+    assert_equal 1, rollup.count
+    assert_equal 1, rollup.status_4xx
+    assert_in_delta data[:duration], rollup.sum_duration.to_f
+    assert_in_delta 3.25, RailsPulse::Rollup.find_by!(rollupable: query).sum_duration.to_f
+    assert_not RailsPulse::Route.exists?(path: "/private-path")
+  end
+
+  test "request_filter drops nil invalid returns and errors without persistence or private logging" do
+    output = StringIO.new
+    original_logger = RailsPulse.configuration.logger
+    RailsPulse.configuration.logger = Logger.new(output)
+    filters = [ nil, false, true, "private-value", [], 123 ].map { |value| ->(_data) { value } }
+    filters << ->(data) { raise "private-error: #{data.inspect}" }
+
+    assert_no_difference %w[RailsPulse::Request.count RailsPulse::Route.count RailsPulse::Rollup.count] do
+      filters.each do |filter|
+        RailsPulse.configuration.request_filter = filter
+        [ tracking_data, folded_tracking_data ].each do |data|
+          RailsPulse::Tracker.track_request(data.merge(path: "/private-path"))
+        end
+      end
+      RailsPulse::Tracker.flush_rollups!
+    end
+
+    assert_empty output.string
+  ensure
+    RailsPulse.configuration.logger = original_logger
+  end
+
+  test "nil request_filter preserves unmatched full and folded request paths" do
+    RailsPulse.configuration.request_filter = nil
+    data = tracking_data.merge(path: "/unchanged-full", controller_action: nil)
+    RailsPulse::Tracker.track_request(data)
+    RailsPulse::Tracker.track_request(
+      folded_tracking_data.merge(path: "/unchanged-folded", controller_action: nil)
+    )
+    RailsPulse::Tracker.flush_rollups!
+
+    request = RailsPulse::Request.find_by!(request_uuid: data[:request_uuid])
+
+    assert_equal "/unchanged-full", request.route.path
+    assert_nil request.route.controller_action
+    assert RailsPulse::Route.exists?(path: "/unchanged-folded", controller_action: nil)
   end
 
   # Schema Gate Tests

@@ -37,6 +37,30 @@ module RailsPulse
       end
     end
 
+    # Request Filter Tests
+
+    test "request_filter defaults to nil and accepts nil or callables" do
+      assert_nil Configuration.new.request_filter
+      assert_nil build_config { self.request_filter = nil }.request_filter
+
+      callable = Object.new
+      def callable.call(data) = data
+
+      [ ->(data) { data }, callable ].each do |filter|
+        assert_same filter, build_config { self.request_filter = filter }.request_filter
+      end
+    end
+
+    test "request_filter rejects non-callables without inspecting their value" do
+      [ false, true, "private-value", 123, {} ].each do |filter|
+        error = assert_raises(ArgumentError) do
+          build_config { self.request_filter = filter }
+        end
+
+        assert_equal "request_filter must respond to #call or be nil", error.message
+      end
+    end
+
     # Store Full Details Tests
 
     test "store_full_details defaults to :all" do

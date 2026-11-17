@@ -5,11 +5,82 @@ module RailsPulse
     class RequestCollectorAdapterTest < ActionDispatch::IntegrationTest
       setup do
         @original_async = RailsPulse.configuration.async
+        @original_request_filter = RailsPulse.configuration.request_filter
+        @original_store_full_details = RailsPulse.configuration.store_full_details
         RailsPulse.configuration.async = false  # Use sync mode for tests
       end
 
       teardown do
         RailsPulse.configuration.async = @original_async
+        RailsPulse.configuration.request_filter = @original_request_filter
+        RailsPulse.configuration.store_full_details = @original_store_full_details
+        RailsPulse::Tracker.reset_rollups!
+      end
+
+      # Request Filter Tests
+
+      test "request_filter buckets unknown routes for full and folded requests" do
+        seen = []
+        RailsPulse.configuration.request_filter = ->(data) do
+          seen << data.dup
+          data[:path] = "/unmatched" if data[:controller_action].blank?
+          data
+        end
+
+        [ :all, { above_threshold: :slow, sample_rate_below: 0 } ].each do |setting|
+          RailsPulse.configuration.store_full_details = setting
+          get "/private-unmatched-path"
+
+          assert_response :not_found
+        end
+        RailsPulse::Tracker.flush!
+
+        route = RailsPulse::Route.find_by!(path: "/unmatched", controller_action: nil)
+        request = RailsPulse::Request.find_by!(route: route)
+        rollup = RailsPulse::Rollup.find_by!(rollupable: route)
+
+        assert_equal [ nil, false ], seen.map { |data| data[:detail] }
+        assert_equal [ 404, 404 ], seen.map { |data| data[:status] }
+        assert_equal 404, request.status
+        assert_in_delta seen.first[:duration], request.duration, 0.001
+        assert_equal 1, rollup.count
+        assert_equal 1, rollup.status_4xx
+        assert_in_delta seen.last[:duration], rollup.sum_duration.to_f, 0.001
+        assert_not RailsPulse::Route.exists?(path: "/private-unmatched-path")
+      end
+
+      test "request_filter redacts an escaping exception request without changing its exception" do
+        seen = nil
+        RailsPulse.configuration.request_filter = ->(data) do
+          seen = data
+          data.merge(path: "/redacted-error")
+        end
+
+        error = assert_raises(StandardError) { post "/errors/raise" }
+        request = RailsPulse::Request.find_by!(request_uuid: seen[:request_uuid])
+
+        assert_equal "Simulated error raised from test app", error.message
+        assert_equal "/redacted-error", request.route.path
+        assert_equal "home#raise_error", request.route.controller_action
+        assert_equal 500, request.status
+        assert request.is_error
+        assert_not RailsPulse::Route.exists?(path: "/errors/raise")
+      end
+
+      test "request_filter failure does not replace an escaping host exception or log private data" do
+        output = StringIO.new
+        original_logger = RailsPulse.configuration.logger
+        RailsPulse.configuration.logger = Logger.new(output)
+        RailsPulse.configuration.request_filter = ->(data) { raise "private-filter-error: #{data.inspect}" }
+
+        assert_no_difference "RailsPulse::Request.count" do
+          error = assert_raises(StandardError) { post "/errors/raise" }
+
+          assert_equal "Simulated error raised from test app", error.message
+        end
+        assert_empty output.string
+      ensure
+        RailsPulse.configuration.logger = original_logger
       end
 
       test "middleware tracks successful requests in sync mode" do
