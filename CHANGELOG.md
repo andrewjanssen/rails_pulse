@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Request filters can use Rails' recognized route pattern to redact format suffixes and glob
+  segments without changing default path handling.
 - An optional request filter can redact metadata or drop full-detail and folded requests before
   queueing, without changing collection when unset.
 - An optional operation filter can redact or exclude telemetry before it is buffered, without changing capture when no filter is configured.
@@ -19,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cleanup preserves route and query identities while any summary still references them, keeping
+  historical summary joins intact after raw data expires or count limits are enforced.
 - A custom range ending exactly on an hour (or midnight) now treats that bound as exclusive, so a 15:00-to-15:00 selection charts 24 hourly buckets instead of 25 and the chart matches the displayed range (#337).
 - `rails generate rails_pulse:upgrade` now stamps copied migrations with a fresh timestamp instead of the gem's original one, so they run after the app's Rails Pulse install migration and `db:migrate` no longer fails on databases that have not run it yet (#420).
 - `rails_pulse:migrate_routes` no longer aborts when a recorded path isn't a valid URI (for example a scanner request like `/user[email]`); such routes count as skipped and the migration continues (#414).

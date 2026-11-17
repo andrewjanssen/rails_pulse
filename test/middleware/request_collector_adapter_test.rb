@@ -19,6 +19,68 @@ module RailsPulse
 
       # Request Filter Tests
 
+      test "route_pattern metadata does not change default inferred path persistence" do
+        RailsPulse.configuration.request_filter = nil
+
+        get "/privacy/records/same/same.private-marker"
+
+        assert_response :created
+        assert RailsPulse::Route.exists?(
+          path: "/privacy/records/same/same.private-marker", controller_action: "home#create"
+        )
+        assert_not RailsPulse::Route.exists?(path: "/privacy/records/:account/:id(.:format)")
+      end
+
+      test "request_filter receives trusted route patterns for full and folded recognized paths" do
+        seen = []
+        RailsPulse.configuration.request_filter = ->(data) do
+          seen << data.dup
+          data.merge(path: data.fetch(:route_pattern))
+        end
+        paths = {
+          "/privacy/records/same/same.private-marker" => "/privacy/records/:account/:id(.:format)",
+          "/privacy/files/a/private-marker/filename.txt" => "/privacy/files/*filename(.:format)"
+        }
+
+        [ :all, { above_threshold: :slow, sample_rate_below: 0 } ].each do |setting|
+          RailsPulse.configuration.store_full_details = setting
+          paths.each do |path, pattern|
+            get path
+
+            assert_response :created
+            assert_equal pattern, seen.last[:route_pattern]
+            assert_equal "home#create", seen.last[:controller_action]
+          end
+        end
+        RailsPulse::Tracker.flush!
+
+        assert_equal [ nil, nil, false, false ], seen.map { |data| data[:detail] }
+        paths.each_value do |pattern|
+          route = RailsPulse::Route.find_by!(path: pattern, controller_action: "home#create")
+
+          assert_equal 1, RailsPulse::Request.where(route: route).count
+          assert_equal 1, RailsPulse::Rollup.find_by!(rollupable: route).count
+        end
+        assert_not RailsPulse::Route.where("path LIKE ?", "%private-marker%").exists?
+      end
+
+      test "request_filter receives the recognized route pattern while an exception escapes" do
+        seen = nil
+        RailsPulse.configuration.request_filter = ->(data) do
+          seen = data
+          data.merge(path: data.fetch(:route_pattern))
+        end
+
+        error = assert_raises(StandardError) { post "/privacy/errors/private-marker" }
+        request = RailsPulse::Request.find_by!(request_uuid: seen[:request_uuid])
+
+        assert_equal "Simulated error raised from test app", error.message
+        assert_equal "/privacy/errors/:id(.:format)", seen[:route_pattern]
+        assert_equal seen[:route_pattern], request.route.path
+        assert_equal 500, request.status
+        assert_not RailsPulse::Route.where("path LIKE ?", "%private-marker%").exists?
+      end
+
       test "request_filter buckets unknown routes for full and folded requests" do
         seen = []
         RailsPulse.configuration.request_filter = ->(data) do
@@ -40,6 +102,7 @@ module RailsPulse
         rollup = RailsPulse::Rollup.find_by!(rollupable: route)
 
         assert_equal [ nil, false ], seen.map { |data| data[:detail] }
+        assert_not seen.any? { |data| data.key?(:route_pattern) }
         assert_equal [ 404, 404 ], seen.map { |data| data[:status] }
         assert_equal 404, request.status
         assert_in_delta seen.first[:duration], request.duration, 0.001

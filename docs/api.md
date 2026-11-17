@@ -42,6 +42,13 @@ logging data or errors. The default is `nil`, preserving existing behavior. This
 telemetry metadata, not route matching, application responses, jobs, or exception records.
 The initializer template documents the keys and an unmatched-path bucketing example.
 
+When available, `:route_pattern` contains Rails' public `request.route_uri_pattern`
+for the recognized route, including format and glob placeholders. It is omitted when
+Rails returns `nil`, and is metadata only, never persisted as a request column.
+It is available for full-detail, folded, and escaping-exception requests. A filter can
+set `:path` to `request[:route_pattern] || "/unmatched"` to avoid inferred paths carrying
+private format suffixes or glob segments. Without a filter, path handling is unchanged.
+
 ## Navigation
 
 - `RailsPulse.register_nav_item(label:, path_helper:, icon:, position: 100)` — adds an entry

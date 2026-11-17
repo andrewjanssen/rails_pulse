@@ -208,6 +208,10 @@ RailsPulse.configure do |config|
   # Applies to full-detail and folded requests, including escaping exceptions.
   # Common keys: :method, :path, :controller_action (nil for unmatched routes),
   # :duration (ms), :status, :occurred_at, :operations (already operation-filtered).
+  # When Rails recognizes a route, :route_pattern contains req.route_uri_pattern
+  # (e.g. "/posts/:id(.:format)" or "/files/*filename(.:format)"). Omitted when nil.
+  # This is callback metadata only, not an extra database column. To replace
+  # inferred paths (including private format/glob text), set :path to this pattern.
   # Full detail also has :is_error, :request_uuid, and :response_size_bytes.
   # :detail is absent with store_full_details = :all, otherwise true or false;
   # folded requests contain only slimmed SQL operations.
@@ -222,6 +226,10 @@ RailsPulse.configure do |config|
   # config.request_filter = ->(request) {
   #   request[:path] = "/unmatched" if request[:controller_action].blank?
   #   request
+  # }
+  # To use only Rails' recognized templates, with a bucket for unmatched requests:
+  # config.request_filter = ->(request) {
+  #   request.merge(path: request[:route_pattern] || "/unmatched")
   # }
 
   # ====================================================================================================

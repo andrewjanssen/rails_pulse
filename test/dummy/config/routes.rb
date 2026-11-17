@@ -34,4 +34,7 @@ Rails.application.routes.draw do
   get "posts", to: "home#index", as: :posts
   get "posts/:id", to: "home#index", as: :post
   get "partners/:client_id/submissions/:uuid", to: "home#index", as: :partner_submission
+  get "privacy/records/:account/:id", to: "home#create"
+  get "privacy/files/*filename", to: "home#create"
+  post "privacy/errors/:id", to: "home#raise_error"
 end

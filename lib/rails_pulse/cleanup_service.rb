@@ -299,12 +299,15 @@ module RailsPulse
       cleanup_by_count(RailsPulse::Route, :rails_pulse_routes, order_column: :created_at, scope: orphaned_routes_scope)
     end
 
-    # A route or query with rollup rows is still feeding hourly summaries
-    # (detail capture folded its traffic instead of persisting it), so it is
-    # not an orphan until its rollups are pruned.
+    # Rollups still feed hourly summaries; retained summaries need their identities
+    # for historical joins. Neither kind of reference is an orphan.
     def orphaned_queries_scope
       scope = RailsPulse::Query.where(
         "NOT EXISTS (SELECT 1 FROM rails_pulse_operations WHERE rails_pulse_operations.query_id = rails_pulse_queries.id)"
+      ).where(
+        "NOT EXISTS (SELECT 1 FROM rails_pulse_summaries " \
+          "WHERE rails_pulse_summaries.summarizable_type = 'RailsPulse::Query' " \
+          "AND rails_pulse_summaries.summarizable_id = rails_pulse_queries.id)"
       )
       if rollups_table_exists?
         scope = scope.where(
@@ -317,6 +320,10 @@ module RailsPulse
     def orphaned_routes_scope
       scope = RailsPulse::Route.where(
         "NOT EXISTS (SELECT 1 FROM rails_pulse_requests WHERE rails_pulse_requests.route_id = rails_pulse_routes.id)"
+      ).where(
+        "NOT EXISTS (SELECT 1 FROM rails_pulse_summaries " \
+          "WHERE rails_pulse_summaries.summarizable_type = 'RailsPulse::Route' " \
+          "AND rails_pulse_summaries.summarizable_id = rails_pulse_routes.id)"
       )
       if rollups_table_exists?
         scope = scope.where(

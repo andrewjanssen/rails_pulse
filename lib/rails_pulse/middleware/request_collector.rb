@@ -98,6 +98,8 @@ module RailsPulse
           controller_action: controller_action,
           occurred_at: occurred_at
         }
+        route_pattern = req.route_uri_pattern
+        base[:route_pattern] = route_pattern if route_pattern
 
         if settings.nil? || capture_detail?(settings, duration, status, operations)
           full = base.merge(

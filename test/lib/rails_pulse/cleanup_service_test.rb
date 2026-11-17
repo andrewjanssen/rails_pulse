@@ -196,6 +196,54 @@ module RailsPulse
       end
     end
 
+    # Summary Identity Retention Tests
+
+    %w[time count].each do |mode|
+      test "#{mode}-based cleanup preserves route and query identities until their summaries are removed" do
+        RailsPulse.configuration.full_retention_period = mode == "time" ? 30.days : nil
+        RailsPulse.configuration.max_table_records =
+          mode == "count" ? { rails_pulse_queries: 1, rails_pulse_routes: 1 } : nil
+        route = create_route("/summary-retained", created_at: 90.days.ago)
+        query = RailsPulse::Query.create!(
+          normalized_sql: "SELECT * FROM summary_retained", created_at: 90.days.ago
+        )
+        # Count cleanup must have deletable rows over its cap, independently of protected rows.
+        2.times do |i|
+          create_route("/summary-orphan-#{i}", created_at: (80 - i).days.ago)
+          RailsPulse::Query.create!(
+            normalized_sql: "SELECT * FROM summary_orphan_#{i}", created_at: (80 - i).days.ago
+          )
+        end
+        summaries = [ route, query ].flat_map do |subject|
+          RailsPulse::Summary::PERIOD_TYPES.map do |period|
+            start = (period == "hour" ? 2.days.ago : 60.days.ago).beginning_of_hour
+            RailsPulse::Summary.create!(
+              summarizable: subject, period_type: period, period_start: start,
+              period_end: start + 1.hour, count: 1, avg_duration: 12.5
+            )
+          end
+        end
+
+        stats = CleanupService.perform
+
+        assert RailsPulse::Route.exists?(route.id)
+        assert RailsPulse::Query.exists?(query.id)
+        assert_equal summaries.size, RailsPulse::Summary.count
+        assert_equal [ route.id ], RailsPulse::Summary.for_routes.joins(:route)
+          .distinct.pluck("rails_pulse_routes.id")
+        assert_equal [ query.id ], RailsPulse::Summary.for_queries.joins(:query)
+          .distinct.pluck("rails_pulse_queries.id")
+        assert_operator stats[:"#{mode}_based"][:routes], :>, 0
+        assert_operator stats[:"#{mode}_based"][:queries], :>, 0
+
+        RailsPulse::Summary.where(id: summaries.map(&:id)).delete_all
+        CleanupService.perform
+
+        assert_not RailsPulse::Route.exists?(route.id)
+        assert_not RailsPulse::Query.exists?(query.id)
+      end
+    end
+
     # Count-based Cleanup Tests
 
     test "count-based cleanup deletes oldest jobs beyond max" do

@@ -27,6 +27,30 @@ class RailsPulse::Tracker::RequestFilterTest < ActiveSupport::TestCase
 
   # Queue Boundary Tests
 
+  test "recognized route patterns replace private paths before queueing and batch persistence" do
+    RailsPulse.configuration.request_filter = ->(data) do
+      assert_equal 0, @writer.size
+      data.merge(path: data.fetch(:route_pattern))
+    end
+
+    status, _, body = Rails.application.call(
+      Rack::MockRequest.env_for("/privacy/files/a/private-marker/filename.txt")
+    )
+    body.close if body.respond_to?(:close)
+
+    assert_equal 201, status
+    assert_equal 1, @writer.size
+    RailsPulse::ApplicationRecord.transaction(requires_new: true) do
+      assert_difference "RailsPulse::Request.count", 1 do
+        assert_equal 1, @writer.drain
+      end
+      assert RailsPulse::Route.exists?(path: "/privacy/files/*filename(.:format)")
+      assert_not RailsPulse::Route.where("path LIKE ?", "%private-marker%").exists?
+
+      raise ActiveRecord::Rollback
+    end
+  end
+
   test "request_filter redacts full and folded requests before the writer receives them" do
     seen = []
     RailsPulse.configuration.request_filter = ->(data) do
